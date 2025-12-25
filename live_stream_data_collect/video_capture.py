@@ -11,8 +11,7 @@ while True:
     ret, frame = video.read()
 
 
-    img = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
-    cv.imshow("video", img)
+    cv.imshow("video", frame)
 
 
 
