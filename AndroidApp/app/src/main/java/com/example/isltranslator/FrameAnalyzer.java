@@ -12,7 +12,8 @@ import androidx.annotation.NonNull;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
 
-import com.google.mediapipe.tasks.vision.core.MediaPipeImage;
+import com.google.mediapipe.framework.image.BitmapImageBuilder;
+import com.google.mediapipe.framework.image.MPImage;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
@@ -28,20 +29,23 @@ public class FrameAnalyzer implements ImageAnalysis.Analyzer {
     @Override
     @SuppressLint("UnsafeOptInUsageError")
     public void analyze(@NonNull ImageProxy imageProxy) {
-        Image mediaImage = imageProxy.getImage();
 
-        if (mediaImage != null) {
-            Bitmap bitmap = toBitmap(mediaImage);
-
-            // 🔴 Use MediaPipeImage instead of MPImage
-            MediaPipeImage mpImage = MediaPipeImage.createFromBitmap(bitmap);
-            handLandmarkerHelper.detect(mpImage);
+        Image image = imageProxy.getImage();
+        if (image == null) {
+            imageProxy.close();
+            return;
         }
+
+        Bitmap bitmap = toBitmap(image);
+        MPImage mpImage = new BitmapImageBuilder(bitmap).build();
+
+        handLandmarkerHelper.detect(mpImage);
 
         imageProxy.close();
     }
 
     private Bitmap toBitmap(Image image) {
+
         ByteBuffer yBuffer = image.getPlanes()[0].getBuffer();
         ByteBuffer uBuffer = image.getPlanes()[1].getBuffer();
         ByteBuffer vBuffer = image.getPlanes()[2].getBuffer();
@@ -56,10 +60,20 @@ public class FrameAnalyzer implements ImageAnalysis.Analyzer {
         vBuffer.get(nv21, ySize, vSize);
         uBuffer.get(nv21, ySize + vSize, uSize);
 
-        YuvImage yuvImage = new YuvImage(nv21, ImageFormat.NV21, image.getWidth(), image.getHeight(), null);
+        YuvImage yuvImage = new YuvImage(
+                nv21,
+                ImageFormat.NV21,
+                image.getWidth(),
+                image.getHeight(),
+                null
+        );
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        yuvImage.compressToJpeg(new Rect(0, 0, image.getWidth(), image.getHeight()), 100, out);
+        yuvImage.compressToJpeg(
+                new Rect(0, 0, image.getWidth(), image.getHeight()),
+                100,
+                out
+        );
 
         byte[] imageBytes = out.toByteArray();
         return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);

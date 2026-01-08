@@ -17,20 +17,20 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.mediapipe.tasks.components.containers.NormalizedLandmark;
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult;
-import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmark;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ExecutionException;
 
 public class MainActivity extends AppCompatActivity implements HandLandmarkerHelper.HandLandmarkerListener {
 
     private PreviewView previewView;
     private OverlayView overlayView;
-    private TextView gestureTextView;
+    private TextView tvResult;
 
     private TFLiteModel tfliteModel;
     private HandLandmarkerHelper handLandmarkerHelper;
@@ -49,26 +49,21 @@ public class MainActivity extends AppCompatActivity implements HandLandmarkerHel
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        // Initialize UI
         previewView = findViewById(R.id.previewView);
         overlayView = findViewById(R.id.overlayView);
-        gestureTextView = findViewById(R.id.gestureTextView);
+        tvResult = findViewById(R.id.tvResult);
 
-        // Load TFLite model
         try {
             tfliteModel = new TFLiteModel(this, "isl_model.tflite");
         } catch (IOException e) {
             e.printStackTrace();
         }
 
-        // Setup HandLandmarker
         handLandmarkerHelper = new HandLandmarkerHelper(this, this);
         handLandmarkerHelper.setup();
 
-        // Executor for CameraX image analysis
         cameraExecutor = Executors.newSingleThreadExecutor();
 
-        // Request camera permission if not granted
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
                 == PackageManager.PERMISSION_GRANTED) {
             startCamera();
@@ -79,9 +74,6 @@ public class MainActivity extends AppCompatActivity implements HandLandmarkerHel
         }
     }
 
-    /**
-     * Start CameraX with Preview + ImageAnalysis
-     */
     private void startCamera() {
         ListenableFuture<ProcessCameraProvider> cameraProviderFuture =
                 ProcessCameraProvider.getInstance(this);
@@ -90,14 +82,11 @@ public class MainActivity extends AppCompatActivity implements HandLandmarkerHel
             try {
                 ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
 
-                // Preview
                 Preview preview = new Preview.Builder().build();
                 preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
-                // Front camera
                 CameraSelector cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA;
 
-                // Image analysis for frames
                 ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .build();
@@ -105,7 +94,6 @@ public class MainActivity extends AppCompatActivity implements HandLandmarkerHel
                 imageAnalysis.setAnalyzer(cameraExecutor,
                         new FrameAnalyzer(handLandmarkerHelper));
 
-                // Bind to lifecycle
                 cameraProvider.unbindAll();
                 cameraProvider.bindToLifecycle(
                         this,
@@ -134,17 +122,14 @@ public class MainActivity extends AppCompatActivity implements HandLandmarkerHel
         }
     }
 
-    /**
-     * Convert HandLandmarkerResult to TFLite input vector
-     */
     private float[] createFeatureVector(HandLandmarkerResult result) {
-        if (result == null || result.multiHandLandmarks().isEmpty()) return new float[63];
+        if (result == null || result.landmarks().isEmpty()) return new float[63];
 
-        List<HandLandmark> landmarks = result.multiHandLandmarks().get(0);
-        float[] vector = new float[21 * 3]; // x, y, z
+        List<NormalizedLandmark> landmarks = result.landmarks().get(0);
+        float[] vector = new float[63];
 
         for (int i = 0; i < 21; i++) {
-            vector[i * 3 + 0] = landmarks.get(i).x();
+            vector[i * 3]     = landmarks.get(i).x();
             vector[i * 3 + 1] = landmarks.get(i).y();
             vector[i * 3 + 2] = landmarks.get(i).z();
         }
@@ -152,55 +137,44 @@ public class MainActivity extends AppCompatActivity implements HandLandmarkerHel
         return vector;
     }
 
-    /**
-     * Called when HandLandmarker returns results
-     */
     @Override
     public void onResults(HandLandmarkerResult result) {
-        if (result != null && !result.multiHandLandmarks().isEmpty()) {
 
-            // Convert landmarks to vector
-            float[] inputVector = createFeatureVector(result);
-
-            // Run TFLite model
-            float[][] output = tfliteModel.predict(inputVector, 26);
-
-            // Find max probability
-            int maxIdx = 0;
-            float maxVal = output[0][0];
-            for (int i = 1; i < output[0].length; i++) {
-                if (output[0][i] > maxVal) {
-                    maxVal = output[0][i];
-                    maxIdx = i;
-                }
-            }
-
-            String predictedLetter = alphabetLabels[maxIdx];
-            Log.d("HAND", "Predicted: " + predictedLetter);
-
-            // Update UI
-            runOnUiThread(() -> {
-                gestureTextView.setText(predictedLetter);
-                overlayView.setResults(result);
-            });
-
-        } else {
-            // Clear overlay and text if no hand
+        if (result == null || result.landmarks().isEmpty()) {
             runOnUiThread(() -> {
                 overlayView.setResults(null);
-                gestureTextView.setText("");
+                tvResult.setText("");
             });
+            return;
         }
+
+        float[] inputVector = createFeatureVector(result);
+        float[][] output = tfliteModel.predict(inputVector, 26);
+
+        int maxIdx = 0;
+        float maxVal = output[0][0];
+
+        for (int i = 1; i < output[0].length; i++) {
+            if (output[0][i] > maxVal) {
+                maxVal = output[0][i];
+                maxIdx = i;
+            }
+        }
+
+        String predictedLetter = alphabetLabels[maxIdx];
+        Log.d("HAND", "Predicted: " + predictedLetter);
+
+        runOnUiThread(() -> {
+            tvResult.setText(predictedLetter);
+            overlayView.setResults(result);
+        });
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
 
-        // Release TFLite model resources
         if (tfliteModel != null) tfliteModel.close();
-
-        // Shutdown camera executor
         if (cameraExecutor != null) cameraExecutor.shutdown();
     }
 }
